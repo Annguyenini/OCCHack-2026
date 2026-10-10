@@ -1,0 +1,11 @@
+{
+  "title": "LevelUp",
+  "description": "Engage users in real-life tasks through a gamified platform that motivates and rewards them for completing everyday activities.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
