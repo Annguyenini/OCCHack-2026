@@ -17,6 +17,7 @@ export type BackendProfileStats = {
 
 export type BackendTask = {
   id: string;
+  user_id?: string;
   title: string;
   description: string;
   exp_reward: number;
@@ -26,6 +27,21 @@ export type BackendTask = {
   is_active: boolean;
   assigned_at: string;
   completed_at: string | null;
+  is_side_quest?: boolean;
+  batch_id?: string | null;
+};
+
+export type CurrentTasksResponse = {
+  date: string;
+  count: number;
+  tasks: BackendTask[];
+};
+
+export type CompletedTasksResponse = {
+  count: number;
+  limit: number;
+  offset: number;
+  tasks: BackendTask[];
 };
 
 export type BackendClothing = {
@@ -100,8 +116,19 @@ export function getMyStats() {
   return apiRequest<BackendProfileStats>("/user-stat/");
 }
 
-export function getMyTasks() {
-  return apiRequest<BackendTask[]>("/user-tasks/");
+export function getCurrentTasks() {
+  return apiRequest<CurrentTasksResponse>("/user-tasks/current");
+}
+
+export function getCompletedTasks() {
+  return apiRequest<CompletedTasksResponse>("/user-tasks/completed");
+}
+
+export function generateSideQuest(sideQuest: string, duration = 30) {
+  return apiRequest<unknown>("/user-tasks/generate-task", {
+    method: "POST",
+    body: JSON.stringify({ side_quest: sideQuest, duration }),
+  });
 }
 
 export function updateTaskStatus(

@@ -167,6 +167,8 @@ h1 { font: 800 clamp(29px, 3vw, 39px)/1.15 "Manrope", sans-serif; letter-spacing
 .quest-title-line { display: flex; align-items: center; gap: 8px; }
 .quest-title-line h3 { font: 700 13px "Manrope", sans-serif; }
 .category { padding: 3px 6px; border-radius: 5px; background: #f2f2f5; color: #8b8c99; font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; }
+.coin-reward-badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px; border-radius: 6px; background: #fff8e5; color: #80651e; font-size: 9px; font-weight: 800; letter-spacing: 0; white-space: nowrap; }
+.coin-reward-badge svg { color: #c49216; }
 .quest-copy p { margin-top: 4px; font-size: 11px; color: var(--muted); }
 .check-button { width: 27px; height: 27px; border: 1.5px solid #d7d7de; border-radius: 9px; display: grid; place-items: center; background: white; color: white; transition: all .2s ease; }
 .check-button:hover { border-color: var(--lime-dark); }
@@ -306,6 +308,12 @@ h1 { font: 800 clamp(29px, 3vw, 39px)/1.15 "Manrope", sans-serif; letter-spacing
 }
 .onboarding-modal input::placeholder { color: #aaaab4; font-weight: 400; }
 .onboarding-modal input:focus { border-color: var(--purple); box-shadow: 0 0 0 4px var(--lavender); background: white; }
+.generate-task-modal textarea { width: 100%; min-height: 96px; resize: vertical; padding: 12px 14px; border: 1px solid #dcdce4; border-radius: 11px; outline: 0; color: var(--ink); background: #fafafa; font: 500 13px/1.5 "DM Sans", sans-serif; }
+.generate-task-modal textarea:focus { border-color: var(--purple); box-shadow: 0 0 0 4px var(--lavender); background: white; }
+.generate-task-modal textarea::placeholder { color: #aaaab4; font-weight: 400; }
+.generate-task-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 12px; }
+.generate-task-actions .onboarding-button { width: auto; min-width: 150px; margin-top: 0; padding: 0 14px; }
+.generate-cancel-button { min-width: 80px; border-radius: 11px; padding: 0 14px; color: var(--muted); background: #ececf0; font-size: 12px; font-weight: 700; }
 .onboarding-gender { margin-top: 18px; }
 .gender-label { display: block; margin-bottom: 7px; color: var(--ink); font-size: 10px; font-weight: 800; }
 .onboarding-gender .gender-toggle { width: 100%; }

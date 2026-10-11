@@ -19,7 +19,9 @@ import {
   signInAnonymously,
   initializeProfile,
   getMyStats,
-  getMyTasks,
+  getCurrentTasks,
+  getCompletedTasks,
+  generateSideQuest as requestSideQuest,
   updateTaskStatus,
   getMarketClothes,
   getMyClothes,
@@ -410,33 +412,54 @@ export default function App() {
   const [playerName, setPlayerName] = useState("");
   const [nameDraft, setNameDraft] = useState("");
   const [profileReady, setProfileReady] = useState(false);
+  const [generatePromptOpen, setGeneratePromptOpen] = useState(false);
+  const [sideQuestDraft, setSideQuestDraft] = useState("");
+  const [generatingTask, setGeneratingTask] = useState(false);
+  const [hasGeneratedTask, setHasGeneratedTask] = useState(
+    () => window.localStorage.getItem("sidekick-generated-task") === "true",
+  );
 
   const completed = quests.filter((quest) => quest.done).length;
   const completionPercent = quests.length
     ? Math.round((completed / quests.length) * 100)
     : 0;
-  const refreshBackendData = async () => {
-    const [stats, backendTasks, clothes, inventory] = await Promise.all([
+  const refreshTaskData = async () => {
+    const [stats, currentTasks, completedTasks] = await Promise.all([
       getMyStats(),
-      getMyTasks(),
+      getCurrentTasks(),
+      getCompletedTasks(),
+    ]);
+    setCoins(stats.coins);
+    setQuests([
+      ...currentTasks.tasks.map((task) => ({
+        id: task.id,
+        title: task.title,
+        detail: task.description,
+        coinReward: task.coin_reward,
+        category: "Quest",
+        icon: "bolt" as const,
+        tone: "lilac",
+        done: false,
+      })),
+      ...completedTasks.tasks.map((task) => ({
+        id: task.id,
+        title: task.title,
+        detail: task.description,
+        coinReward: task.coin_reward,
+        category: "Quest",
+        icon: "bolt" as const,
+        tone: "lilac",
+        done: true,
+      })),
+    ]);
+  };
+
+  const refreshBackendData = async () => {
+    const [clothes, inventory] = await Promise.all([
       getMarketClothes(),
       getMyClothes(),
     ]);
-
-    setCoins(stats.coins);
-    if (backendTasks.length > 0) {
-      setQuests(
-        backendTasks.map((task) => ({
-          id: task.id,
-          title: task.title,
-          detail: task.description,
-          category: "Quest",
-          icon: "bolt",
-          tone: "lilac",
-          done: task.status === "completed",
-        })),
-      );
-    }
+    await refreshTaskData();
     setMarketClothes(clothes);
     setPurchased(inventory.map((entry) => entry.clothes.name));
   };
@@ -515,23 +538,24 @@ export default function App() {
     if (!quest) return;
 
     if (typeof id === "string") {
-      if (quest.done) return;
+      const nextStatus = quest.done ? "remaining" : "completed";
       try {
-        await updateTaskStatus(id, "completed");
-        const stats = await getMyStats();
-        setQuests((current) =>
-          current.map((item) =>
-            item.id === id ? { ...item, done: true } : item,
-          ),
-        );
-        setCoins(stats.coins);
-        setToast("Quest completed!");
-        window.setTimeout(() => setToast(""), 2400);
+        await updateTaskStatus(id, nextStatus);
       } catch (error) {
         console.error("Could not update backend task:", error);
         setToast("Could not complete this quest. Please try again.");
         window.setTimeout(() => setToast(""), 2400);
+        return;
       }
+
+      try {
+        await refreshTaskData();
+        setToast(nextStatus === "completed" ? "Quest completed!" : "Quest restored");
+      } catch (error) {
+        console.error("Could not refresh backend tasks:", error);
+        setToast("Quest updated, but the task list could not refresh.");
+      }
+      window.setTimeout(() => setToast(""), 2400);
       return;
     }
 
@@ -567,18 +591,25 @@ export default function App() {
     }
   };
 
-  const addQuest = () => {
-    const id = Date.now();
-    setQuests((current) => [
-      ...current,
-      {
-        id,
-        ...content.newQuestTemplate,
-        done: false,
-      },
-    ]);
-    setToast("A fresh quest joined your day");
-    window.setTimeout(() => setToast(""), 2400);
+  const generateTask = async () => {
+    const sideQuest = sideQuestDraft.trim();
+    if (!sideQuest || generatingTask) return;
+
+    setGeneratingTask(true);
+    try {
+      await requestSideQuest(sideQuest, 30);
+      window.localStorage.setItem("sidekick-generated-task", "true");
+      setHasGeneratedTask(true);
+      setGeneratePromptOpen(false);
+      setSideQuestDraft("");
+      window.location.reload();
+    } catch (error) {
+      console.error("Could not generate side quest:", error);
+      setToast("Could not generate your side quest. Please try again.");
+      window.setTimeout(() => setToast(""), 2400);
+    } finally {
+      setGeneratingTask(false);
+    }
   };
 
   const handleSignOut = async () => {
@@ -591,6 +622,8 @@ export default function App() {
     }
 
     clearPlayerProfile();
+    window.localStorage.removeItem("sidekick-generated-task");
+    setHasGeneratedTask(false);
     setPlayerName("");
     setNameDraft("");
     setCoins(defaultAppContent.economy.startingCoins);
@@ -861,10 +894,15 @@ export default function App() {
                     Everything you&apos;re working toward, all in one place.
                   </p>
                 </div>
-                <Button className="primary-button" onClick={addQuest}>
-                  <Icon name="plus" size={18} />
-                  <span>Add a quest</span>
-                </Button>
+                {!hasGeneratedTask && (
+                  <Button
+                    className="primary-button"
+                    onClick={() => setGeneratePromptOpen(true)}
+                  >
+                    <Icon name="spark" size={18} />
+                    <span>Generate tasks</span>
+                  </Button>
+                )}
               </div>
 
               <div className="quest-summary-grid">
@@ -892,7 +930,7 @@ export default function App() {
                 </article>
               </div>
 
-              <section className="bonus-quest-panel">
+              {/*<section className="bonus-quest-panel">
                 <div className="bonus-symbol">
                   <Icon name="spark" size={30} />
                 </div>
@@ -921,7 +959,7 @@ export default function App() {
                   <Icon name={claimed ? "check" : "bolt"} size={16} />
                   {claimed ? "Completed" : "Complete quest"}
                 </Button>
-              </section>
+              </section>*/}
 
               <div className="quest-board">
                 <section className="quest-column">
@@ -945,6 +983,12 @@ export default function App() {
                           <div className="quest-log-copy">
                             <div>
                               <span className="category">{quest.category}</span>
+                              {typeof quest.coinReward === "number" && (
+                                <span className="coin-reward-badge">
+                                  <Icon name="coin" size={12} />
+                                  +{quest.coinReward} coins
+                                </span>
+                              )}
                             </div>
                             <h3>{quest.title}</h3>
                             <p>{quest.detail}</p>
@@ -992,6 +1036,12 @@ export default function App() {
                           <div className="quest-log-copy">
                             <div>
                               <span className="category">{quest.category}</span>
+                              {typeof quest.coinReward === "number" && (
+                                <span className="coin-reward-badge">
+                                  <Icon name="coin" size={12} />
+                                  +{quest.coinReward} coins
+                                </span>
+                              )}
                             </div>
                             <h3>{quest.title}</h3>
                             <p>{quest.detail}</p>
@@ -1019,10 +1069,15 @@ export default function App() {
                     Small actions add up. Pick a quest and make today count.
                   </p>
                 </div>
-                <Button className="primary-button" onClick={addQuest}>
-                  <Icon name="plus" size={18} />
-                  <span>Add a quest</span>
-                </Button>
+                {!hasGeneratedTask && (
+                  <Button
+                    className="primary-button"
+                    onClick={() => setGeneratePromptOpen(true)}
+                  >
+                    <Icon name="spark" size={18} />
+                    <span>Generate tasks</span>
+                  </Button>
+                )}
               </section>
 
               <section className="avatar-studio">
@@ -1201,6 +1256,12 @@ export default function App() {
                             <div className="quest-title-line">
                               <h3>{quest.title}</h3>
                               <span className="category">{quest.category}</span>
+                              {typeof quest.coinReward === "number" && (
+                                <span className="coin-reward-badge">
+                                  <Icon name="coin" size={12} />
+                                  +{quest.coinReward} coins
+                                </span>
+                              )}
                             </div>
                             <p>{quest.detail}</p>
                           </div>
@@ -1240,6 +1301,50 @@ export default function App() {
         <div className="toast">
           <Icon name="spark" size={17} />
           {toast}
+        </div>
+      )}
+      {generatePromptOpen && (
+        <div className="onboarding-backdrop" role="presentation">
+          <form
+            aria-labelledby="generate-task-title"
+            aria-modal="true"
+            className="onboarding-modal generate-task-modal"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void generateTask();
+            }}
+            role="dialog"
+          >
+            <span className="eyebrow">SIDE QUEST</span>
+            <h2 id="generate-task-title">What side quest would you like?</h2>
+            <p>Describe a task and we’ll generate it for you.</p>
+            <label htmlFor="side-quest-input">Your side quest</label>
+            <textarea
+              autoFocus
+              id="side-quest-input"
+              maxLength={500}
+              onChange={(event) => setSideQuestDraft(event.target.value)}
+              placeholder="For example: Take a 20-minute walk outside"
+              rows={4}
+              value={sideQuestDraft}
+            />
+            <div className="generate-task-actions">
+              <Button
+                className="generate-cancel-button"
+                disabled={generatingTask}
+                onClick={() => setGeneratePromptOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                className="onboarding-button"
+                disabled={!sideQuestDraft.trim() || generatingTask}
+                onClick={() => void generateTask()}
+              >
+                {generatingTask ? "Generating…" : "Generate tasks"}
+              </Button>
+            </div>
+          </form>
         </div>
       )}
       {profileReady && !playerName && (

@@ -19,6 +19,7 @@ export type Quest = {
   id: number | string;
   title: string;
   detail: string;
+  coinReward?: number;
   category: string;
   icon: IconName;
   tone: string;
@@ -55,7 +56,6 @@ export type StoreItem = {
 
 export type AppContent = {
   quests: Quest[];
-  newQuestTemplate: Omit<Quest, "id" | "done">;
   storeCategories: Array<{
     id: StoreItem["category"];
     label: string;
@@ -100,13 +100,6 @@ export function resolveOutfit(name: string, catalog: StoreItem[]): StoreItem {
 
 export const defaultAppContent: AppContent = {
   quests: [],
-  newQuestTemplate: {
-    title: "Read for ten minutes",
-    detail: "Pick up any book and make a little progress",
-    category: "Mind",
-    icon: "leaf",
-    tone: "green",
-  },
   storeCategories: [
     {
       id: "casual",
