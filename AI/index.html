@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LevelUP - OpenRouter API test</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#101324;color:#edf0ff;font:16px/1.6 system-ui,sans-serif}main{max-width:1000px;margin:40px auto;padding:0 24px}section{background:#1a2036;padding:24px;border-radius:16px;margin:24px 0}p,small{color:#b9c1dc}textarea{display:block;width:100%;min-height:240px;margin:12px 0;padding:16px;background:#101324;color:#edf0ff;border:1px solid #647097;border-radius:8px;font:14px/1.5 monospace}button,input,select{font:inherit;padding:10px 14px;margin:4px 4px 4px 0;border-radius:8px}button{background:#ad97ff;color:#101324;border:0;cursor:pointer}button:disabled{opacity:.6;cursor:wait}pre{white-space:pre-wrap;overflow-wrap:anywhere}li{padding:6px 0}.error{color:#ffb4b4}label{display:block;margin-top:12px}
+</style>
+<main>
+<h1>LevelUP - API test</h1>
+<p>AI creates day-one activity templates. The backend builds and saves the full journey with gradual difficulty and daily task bullets.</p>
+<p id="health" role="status">Loading backend...</p>
+<button id="connect">Test API connection</button><p id="connectionStatus" role="status"></p>
+<section>
+<label for="journeyDays"><strong>How long do you want your journey to be?</strong></label>
+<select id="journeyDays" required><option value="" disabled selected>Choose a duration</option><option value="30">30 days</option><option value="60">60 days</option><option value="90">90 days</option></select>
+<label for="input"><strong>User input JSON</strong></label><textarea id="input" spellcheck="false"></textarea>
+<details><summary>Add or delete goals</summary>
+<label for="goalKind">Category</label><select id="goalKind"><option value="main">Main goal</option><option value="side">Side quest</option></select>
+<label for="newGoal">New goal JSON</label><textarea id="newGoal" spellcheck="false"></textarea><button id="addGoal">Add goal</button>
+<label for="deleteId">Goal ID to delete</label><input id="deleteId" placeholder="main-exercise"><button id="deleteGoal">Delete goal</button><p id="goalStatus" role="status"></p>
+<small>Edits change the request. Generate again to include your changes.</small>
+</details>
+<label for="savedPlanId">Saved plan ID</label><input id="savedPlanId" placeholder="Paste a saved plan ID"><button id="loadSaved">Load saved plan</button>
+<button id="generate">Generate tasks</button><p id="status" role="status" aria-live="polite"></p>
+</section>
+<section id="result" hidden>
+<h2>Daily tasks</h2><label for="selectedDate">Date</label><select id="selectedDate"></select><button id="extract">Show tasks</button>
+<p id="dailyStatus" role="status"></p><ul id="tasks"></ul>
+<details><summary>Record side-quest progress</summary>
+<label for="progressGoal">Side-quest goal ID</label><input id="progressGoal" placeholder="side-project">
+<label for="completedMinutes">Total minutes actually completed so far</label><input id="completedMinutes" type="number" min="0" value="0">
+<label for="progressDate">Completed through this date</label><input id="progressDate" type="date">
+<label><input id="questFinished" type="checkbox">I have finished this goal</label><button id="saveProgress">Save progress</button><p id="progressStatus" role="status"></p>
+</details>
+<details><summary>Raw AI JSON</summary><pre id="output"></pre></details><button id="download">Download JSON</button>
+</section>
+</main>
+<script>
+const byId=id=>document.getElementById(id);
+let currentPlan=null;
+async function api(path,body,method='POST'){
+  const response=await fetch(path,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const result=await response.json();
+  if(!response.ok)throw new Error(result.error||`Request failed (${response.status})`);
+  return result;
+}
+function clearPlan(){currentPlan=null;byId('result').hidden=true;}
+function dateString(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
+async function initialize(){
+  try{
+    const sample=await (await fetch('/api/sample')).json(),today=new Date();
+    sample.startDate=dateString(today);
+    for(const goal of sample.sideQuests||[]){if(goal.deadline){const end=new Date(today);end.setDate(end.getDate()+30);goal.deadline=dateString(end);}}
+    byId('input').value=JSON.stringify(sample,null,2);
+    byId('savedPlanId').value=localStorage.getItem('levelupPlanId')||'';
+    const health=await (await fetch('/api/health')).json();
+    byId('health').textContent=`Backend ready. Model: ${health.model}. Choose a ${health.journeyOptions.join(", ")}-day journey below.`;
+  }catch(error){byId('health').textContent=error.message;}
+}
+byId('connect').addEventListener('click',async()=>{
+  byId('connect').disabled=true;byId('connectionStatus').textContent='Checking API...';
+  try{const connected=await api('/api/connection',{});byId('connectionStatus').textContent=connected?'true - API connected.':'false - API connection failed.';}
+  catch(error){byId('connectionStatus').textContent=error.message;}
+  finally{byId('connect').disabled=false;}
+});
+async function extractDay(){
+  try{
+    const day=await api('/api/daily-tasks',{plan:currentPlan,date:byId('selectedDate').value});
+    byId('tasks').replaceChildren();
+    for(const bullet of day.bullets){const item=document.createElement('li');item.textContent=bullet;byId('tasks').append(item);}
+    byId('progressDate').value=day.date;
+    byId('dailyStatus').textContent=day.bullets.length?`Day ${day.day} - ${day.date}`:'No tasks returned for this day.';
+  }catch(error){byId('dailyStatus').textContent=error.message;}
+}
+async function showPlan(plan){
+  const selected=byId('selectedDate').value;
+  currentPlan=plan;byId('output').textContent=JSON.stringify(plan,null,2);byId('selectedDate').replaceChildren();byId('tasks').replaceChildren();
+  for(const day of plan.days||[]){const option=document.createElement('option');option.value=day.date;option.textContent=`Day ${day.day} - ${day.date}`;byId('selectedDate').append(option);}
+  if(plan.days?.some(day=>day.date===selected))byId('selectedDate').value=selected;
+  if(plan.planId){byId('savedPlanId').value=plan.planId;localStorage.setItem('levelupPlanId',plan.planId);}
+  byId('result').hidden=false;
+  if(plan.days?.length)await extractDay();else byId('dailyStatus').textContent='No daily tasks returned.';
+}
+byId('loadSaved').addEventListener('click',async()=>{
+  try{
+    const response=await fetch('/api/plans/'+encodeURIComponent(byId('savedPlanId').value.trim()));const plan=await response.json();
+    if(!response.ok)throw new Error(plan.error);
+    byId('input').value=JSON.stringify(plan.variables.userInput,null,2);byId('journeyDays').value=String(plan.variables.journeyDays);
+    await showPlan(plan);byId('status').textContent='Saved plan loaded. No AI request made.';
+  }catch(error){byId('status').textContent=error.message;}
+});
+byId('saveProgress').addEventListener('click',async()=>{
+  byId('saveProgress').disabled=true;
+  try{
+    const plan=await api('/api/sidequest/progress',{planId:currentPlan.planId,goalId:byId('progressGoal').value,
+      completedMinutes:Number(byId('completedMinutes').value),completed:byId('questFinished').checked,asOfDate:byId('progressDate').value});
+    byId('input').value=JSON.stringify(plan.variables.userInput,null,2);await showPlan(plan);
+    byId('progressStatus').textContent='Actual progress saved and future side quests updated. No AI request made.';
+  }catch(error){byId('progressStatus').textContent=error.message;}
+  finally{byId('saveProgress').disabled=false;}
+});
+byId('extract').addEventListener('click',extractDay);
+byId('selectedDate').addEventListener('change',extractDay);
+byId('input').addEventListener('input',clearPlan);
+byId('journeyDays').addEventListener('change',()=>{
+  clearPlan();
+  try{const payload=JSON.parse(byId('input').value);payload.journeyDays=Number(byId('journeyDays').value);byId('input').value=JSON.stringify(payload,null,2);}
+  catch(error){byId('status').textContent='Fix the input JSON before generating.';}
+});
+byId('generate').addEventListener('click',async()=>{
+  if(!byId('journeyDays').value){byId('status').textContent='Choose 30, 60, or 90 days first.';byId('journeyDays').focus();return;}
+  clearPlan();const status=byId('status'),started=Date.now();status.className='';
+  const controls=['generate','addGoal','deleteGoal','connect','journeyDays','loadSaved','saveProgress'];controls.forEach(id=>byId(id).disabled=true);
+  status.textContent='Generating day-one templates and building the journey locally...';
+  const timer=setInterval(()=>status.textContent=`Generating day-one templates and building the journey locally... ${Math.floor((Date.now()-started)/1000)}s elapsed.`,1000);
+  try{
+    const payload=JSON.parse(byId('input').value);payload.journeyDays=Number(byId('journeyDays').value);
+    byId('input').value=JSON.stringify(payload,null,2);
+    const plan=await api('/api/roadmap',payload);clearInterval(timer);
+    await showPlan(plan);status.textContent=`Plan created and saved in ${Math.floor((Date.now()-started)/1000)}s. Plan ID: ${plan.planId}. ${(plan.warnings||[]).join(' ')}`;
+
+  }catch(error){status.className='error';status.textContent=error.message;}
+  finally{clearInterval(timer);controls.forEach(id=>byId(id).disabled=false);}
+});
+const examples={main:{goalId:'main-journal',type:'custom',title:'Keep a journal',target:[{metric:'journalTime',value:5,unit:'minutes',period:'day'}],progression:{maxMinutes:10,rampDays:30,mode:'increase'}},side:{goalId:'side-saving',title:'Save five dollars',target:[{metric:'savings',value:5,unit:'USD',period:'day'}],deadline:null}};
+function updateExample(){byId('newGoal').value=JSON.stringify(examples[byId('goalKind').value],null,2);}
+updateExample();byId('goalKind').addEventListener('change',updateExample);
+async function editGoals(deleting){
+  const kind=byId('goalKind').value,body={input:JSON.parse(byId('input').value)};
+  if(deleting)body.goalId=byId('deleteId').value;else body[kind==='main'?'goal':'sideQuest']=JSON.parse(byId('newGoal').value);
+  const updated=await api(`/api/goals/${kind}`,body,deleting?'DELETE':'POST');
+  byId('input').value=JSON.stringify(updated,null,2);clearPlan();byId('goalStatus').textContent=deleting?'Goal removed from the request.':'Goal added to the request.';
+}
+byId('addGoal').addEventListener('click',()=>editGoals(false).catch(error=>byId('goalStatus').textContent=error.message));
+byId('deleteGoal').addEventListener('click',()=>editGoals(true).catch(error=>byId('goalStatus').textContent=error.message));
+byId('download').addEventListener('click',()=>{
+  const url=URL.createObjectURL(new Blob([JSON.stringify(currentPlan,null,2)],{type:'application/json'}));
+  const link=document.createElement('a');link.href=url;link.download='levelup-plan.json';document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+});
+initialize();
+</script>
+</html>

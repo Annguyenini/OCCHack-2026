@@ -16,10 +16,9 @@ export type IconName =
   | "users";
 
 export type Quest = {
-  id: number;
+  id: number | string;
   title: string;
   detail: string;
-  xp: number;
   category: string;
   icon: IconName;
   tone: string;
@@ -38,7 +37,7 @@ export type OutfitVariant =
   | "baggy";
 
 export type StoreItem = {
-  id: number;
+  id: number | string;
   name: string;
   description: string;
   price: number;
@@ -67,23 +66,13 @@ export type AppContent = {
     title: string;
     detail: string;
     duration: string;
-    xp: number;
     coins: number;
   };
   economy: {
     startingCoins: number;
     coinsPerQuest: number;
   };
-  leveling: {
-    baseXp: number;
-    multiplier: number;
-  };
   dashboard: {
-    streakDays: number;
-    leagueName: string;
-    leaguePosition: number;
-    leagueSize: number;
-    weeklyRhythm: Array<{ day: string; value: number }>;
     quote: string;
     quoteAuthor: string;
   };
@@ -110,42 +99,10 @@ export function resolveOutfit(name: string, catalog: StoreItem[]): StoreItem {
 }
 
 export const defaultAppContent: AppContent = {
-  quests: [
-    {
-      id: 1,
-      title: "Move your body",
-      detail: "20 minute walk outdoors",
-      xp: 50,
-      category: "Body",
-      icon: "bolt",
-      tone: "coral",
-      done: false,
-    },
-    {
-      id: 2,
-      title: "Clear one surface",
-      detail: "Reset your desk or kitchen counter",
-      xp: 30,
-      category: "Space",
-      icon: "spark",
-      tone: "lilac",
-      done: false,
-    },
-    {
-      id: 3,
-      title: "Reach out",
-      detail: "Message someone you care about",
-      xp: 40,
-      category: "People",
-      icon: "users",
-      tone: "blue",
-      done: true,
-    },
-  ],
+  quests: [],
   newQuestTemplate: {
     title: "Read for ten minutes",
     detail: "Pick up any book and make a little progress",
-    xp: 25,
     category: "Mind",
     icon: "leaf",
     tone: "green",
@@ -345,25 +302,10 @@ export const defaultAppContent: AppContent = {
     title: "Make someone's day",
     detail: "Do one unexpected kind thing for someone around you.",
     duration: "15 min",
-    xp: 75,
     coins: 25,
   },
   economy: { startingCoins: 100, coinsPerQuest: 15 },
-  leveling: { baseXp: 100, multiplier: 2 },
   dashboard: {
-    streakDays: 0,
-    leagueName: "Trailblazer league",
-    leaguePosition: 8,
-    leagueSize: 30,
-    weeklyRhythm: [
-      { day: "M", value: 100 },
-      { day: "T", value: 74 },
-      { day: "W", value: 90 },
-      { day: "T", value: 55 },
-      { day: "F", value: 22 },
-      { day: "S", value: 0 },
-      { day: "S", value: 0 },
-    ],
     quote:
       "Great things are done by a series of small things brought together.",
     quoteAuthor: "Vincent van Gogh",

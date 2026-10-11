@@ -1,7 +1,5 @@
 export type PlayerProfile = {
   name: string
-  level: number
-  xp: number
   coins?: number
   purchased?: string[]
   equipped?: string
@@ -12,6 +10,10 @@ export type PlayerProfile = {
 
 const storageKey = "sidekick-player-profile"
 const profileApiUrl = import.meta.env.VITE_PROFILE_API_URL
+
+export function clearPlayerProfile() {
+  window.localStorage.removeItem(storageKey)
+}
 
 export async function loadPlayerProfile(): Promise<PlayerProfile | null> {
   if (profileApiUrl) {
