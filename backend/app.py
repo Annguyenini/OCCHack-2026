@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 import uvicorn
-
+from fastapi.middleware.cors import CORSMiddleware
 from controllers.market_controller import MarketController
 from controllers.task_controller import UserTaskController
 from controllers.stat_controller import UserStatController
@@ -23,3 +23,10 @@ class AppService:
 
 service = AppService()
 app = service.app
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins
+    allow_credentials=False,
+    allow_methods=["*"],   # Allow all HTTP methods
+    allow_headers=["*"],   # Allow all headers
+)
