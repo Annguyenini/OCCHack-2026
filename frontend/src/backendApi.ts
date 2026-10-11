@@ -116,6 +116,18 @@ export function getMyStats() {
   return apiRequest<BackendProfileStats>("/user-stat/");
 }
 
+export function updateMyCoins(amount: number) {
+  return apiRequest<{
+    message: string;
+    previous_coins: number;
+    change: number;
+    coins: number;
+  }>("/user-stat/coins", {
+    method: "PATCH",
+    body: JSON.stringify({ amount }),
+  });
+}
+
 export function getCurrentTasks() {
   return apiRequest<CurrentTasksResponse>("/user-tasks/current");
 }
@@ -168,4 +180,47 @@ export function buyClothes(clothingId: string) {
   }>(`/market/clothes/${encodeURIComponent(clothingId)}/buy`, {
     method: "POST",
   });
+}
+
+export type MoneyPiratePrediction = "upper" | "below";
+
+export type MoneyPirateSettlement = {
+  message: string;
+  coins: number;
+  change: number;
+  wager: number;
+  player_total: number;
+  host_total: number;
+  won: boolean;
+};
+
+export function validateMoneyPirateWager(wager: number) {
+  return apiRequest<{ valid: boolean; max_wager: number; coins: number }>(
+    "/user-stat/money-pirate/validate-wager",
+    { method: "POST", body: JSON.stringify({ wager }) },
+  );
+}
+
+export function settleMoneyPirateGame(input: {
+  wager: number;
+  prediction: MoneyPiratePrediction;
+  playerDice: [number, number];
+  hostDice: [number, number];
+}) {
+  return apiRequest<MoneyPirateSettlement>("/user-stat/money-pirate/settle", {
+    method: "POST",
+    body: JSON.stringify({
+      wager: input.wager,
+      prediction: input.prediction,
+      player_dice: input.playerDice,
+      host_dice: input.hostDice,
+    }),
+  });
+}
+
+export function restartMoneyPirate() {
+  return apiRequest<{ message: string; coins: number }>(
+    "/user-stat/money-pirate/restart",
+    { method: "POST" },
+  );
 }

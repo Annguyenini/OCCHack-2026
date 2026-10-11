@@ -21,6 +21,10 @@ import {
   getMyStats,
   getCurrentTasks,
   getCompletedTasks,
+  settleMoneyPirateGame,
+  updateMyCoins,
+  validateMoneyPirateWager,
+  restartMoneyPirate,
   generateSideQuest as requestSideQuest,
   updateTaskStatus,
   getMarketClothes,
@@ -398,6 +402,73 @@ function Character({
   );
 }
 
+type PiratePrediction = "upper" | "below";
+type PirateStage =
+  | "betting"
+  | "round-two"
+  | "validating-first"
+  | "validating-second"
+  | "rolling-first"
+  | "rolling-second";
+type PirateHistoryEntry = {
+  playerTotal: number;
+  hostTotal: number;
+  wager: number;
+  won: boolean;
+  prediction: PiratePrediction;
+};
+
+const fruitDice = [
+  "🍒",
+  "🍉 🍉",
+  "🍎 🍎 🍎",
+  "🍇 🍇 🍇 🍇",
+  "🍊 🍊 🍊 🍊 🍊",
+  "🍌 🍌 🍌 🍌 🍌 🍌",
+];
+
+function playPirateSound(kind: "roll" | "win" | "loss", enabled: boolean) {
+  if (!enabled || typeof window === "undefined" || !window.AudioContext) return;
+  try {
+    const context = new window.AudioContext();
+    const notes =
+      kind === "roll"
+        ? [190, 260, 210, 300, 230]
+        : kind === "win"
+          ? [520, 660, 790]
+          : [330, 260, 190];
+    notes.forEach((frequency, index) => {
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = kind === "roll" ? "triangle" : "sine";
+      oscillator.frequency.value = frequency;
+      gain.gain.setValueAtTime(
+        0.0001,
+        context.currentTime + index * (kind === "roll" ? 0.16 : 0.12),
+      );
+      gain.gain.exponentialRampToValueAtTime(
+        0.08,
+        context.currentTime + index * (kind === "roll" ? 0.16 : 0.12) + 0.015,
+      );
+      gain.gain.exponentialRampToValueAtTime(
+        0.0001,
+        context.currentTime + index * (kind === "roll" ? 0.16 : 0.12) + 0.11,
+      );
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start(
+        context.currentTime + index * (kind === "roll" ? 0.16 : 0.12),
+      );
+      oscillator.stop(
+        context.currentTime + index * (kind === "roll" ? 0.16 : 0.12) + 0.12,
+      );
+    });
+    window.setTimeout(() => void context.close(), 1100);
+  } catch {
+    // Audio is optional; a browser may block it before the first gesture.
+  }
+}
+
 export default function App() {
   const [content, setContent] = useState<AppContent>(defaultAppContent);
   const [quests, setQuests] = useState<Quest[]>(defaultAppContent.quests);
@@ -418,6 +489,52 @@ export default function App() {
   const [hasGeneratedTask, setHasGeneratedTask] = useState(
     () => window.localStorage.getItem("sidekick-generated-task") === "true",
   );
+  const [activePirateGame, setActivePirateGame] = useState<"dice" | "coin">("dice");
+  const [coinFlipBet, setCoinFlipBet] = useState("10");
+  const [coinFlipChoice, setCoinFlipChoice] = useState<"heads" | "tails">("heads");
+  const [coinFlipBusy, setCoinFlipBusy] = useState(false);
+  const [coinFlipResult, setCoinFlipResult] = useState<{
+    face: "heads" | "tails";
+    won: boolean;
+    bet: number;
+  } | null>(null);
+  const [coinFlipError, setCoinFlipError] = useState("");
+  const [pirateStage, setPirateStage] = useState<PirateStage>("betting");
+  const [piratePrediction, setPiratePrediction] =
+    useState<PiratePrediction>("upper");
+  const [pirateBetDraft, setPirateBetDraft] = useState("10");
+  const [pirateAddDraft, setPirateAddDraft] = useState("10");
+  const [pirateWager, setPirateWager] = useState(0);
+  const [playerDice, setPlayerDice] = useState<[number | null, number | null]>([
+    null,
+    null,
+  ]);
+  const [hostDice, setHostDice] = useState<[number | null, number | null]>([
+    null,
+    null,
+  ]);
+  const [pirateError, setPirateError] = useState("");
+  const [piratePayout, setPiratePayout] = useState<{
+    won: boolean;
+    amount: number;
+  } | null>(null);
+  const [pirateHistory, setPirateHistory] = useState<PirateHistoryEntry[]>([]);
+  const [showPirateHelp, setShowPirateHelp] = useState(false);
+  const [pirateSoundEnabled, setPirateSoundEnabled] = useState(true);
+  const pirateBusy =
+    pirateStage === "validating-first" ||
+    pirateStage === "validating-second" ||
+    pirateStage === "rolling-first" ||
+    pirateStage === "rolling-second" ||
+    coinFlipBusy;
+  const pirateMaxWager = Math.min(100, Math.max(0, coins + 50));
+  const pirateGameOver = pirateMaxWager < 10;
+
+  useEffect(() => {
+    if (!piratePayout) return;
+    const timer = window.setTimeout(() => setPiratePayout(null), 4500);
+    return () => window.clearTimeout(timer);
+  }, [piratePayout]);
 
   const completed = quests.filter((quest) => quest.done).length;
   const completionPercent = quests.length
@@ -550,7 +667,9 @@ export default function App() {
 
       try {
         await refreshTaskData();
-        setToast(nextStatus === "completed" ? "Quest completed!" : "Quest restored");
+        setToast(
+          nextStatus === "completed" ? "Quest completed!" : "Quest restored",
+        );
       } catch (error) {
         console.error("Could not refresh backend tasks:", error);
         setToast("Quest updated, but the task list could not refresh.");
@@ -609,6 +728,175 @@ export default function App() {
       window.setTimeout(() => setToast(""), 2400);
     } finally {
       setGeneratingTask(false);
+    }
+  };
+
+  const playCoinFlip = async () => {
+    const bet = Number(coinFlipBet);
+    if (!Number.isInteger(bet) || bet < 1 || bet > coins) {
+      setCoinFlipError("Enter a whole coin amount within your balance.");
+      return;
+    }
+    if (coinFlipBusy || pirateStage !== "betting") return;
+
+    setCoinFlipBusy(true);
+    setCoinFlipError("");
+    setCoinFlipResult(null);
+    const face = Math.random() < 0.5 ? "heads" : "tails";
+    const won = face === coinFlipChoice;
+    playPirateSound("roll", pirateSoundEnabled);
+    try {
+      await new Promise((resolve) => window.setTimeout(resolve, 1000));
+      const updated = await updateMyCoins(won ? bet : -bet);
+      setCoins(updated.coins);
+      setCoinFlipResult({ face, won, bet });
+      playPirateSound(won ? "win" : "loss", pirateSoundEnabled);
+    } catch (error) {
+      console.error("Could not update coins for coin flip:", error);
+      setCoinFlipError("The coin flip could not be saved. Please try again.");
+    } finally {
+      setCoinFlipBusy(false);
+    }
+  };
+
+  const startPirateGame = async () => {
+    const wager = Number(pirateBetDraft);
+    if (
+      !Number.isInteger(wager) ||
+      wager < 10 ||
+      wager % 10 !== 0 ||
+      wager > 100 ||
+      wager > pirateMaxWager
+    ) {
+      setPirateError(
+        `Enter a multiple of 10 from 10 to ${pirateMaxWager} coins.`,
+      );
+      return;
+    }
+    if (pirateBusy || pirateGameOver) return;
+
+    setPirateError("");
+    setPirateStage("validating-first");
+    try {
+      await validateMoneyPirateWager(wager);
+    } catch (error) {
+      setPirateError(
+        error instanceof Error ? error.message : "Your wager is not valid.",
+      );
+      setPirateStage("betting");
+      return;
+    }
+    setPirateWager(wager);
+    setPiratePayout(null);
+    setPlayerDice([null, null]);
+    setHostDice([null, null]);
+    setPirateStage("rolling-first");
+    playPirateSound("roll", pirateSoundEnabled);
+    await new Promise((resolve) => window.setTimeout(resolve, 1000));
+    setPlayerDice([1 + Math.floor(Math.random() * 6), null]);
+    setHostDice([1 + Math.floor(Math.random() * 6), null]);
+    setPirateStage("round-two");
+  };
+
+  const rollPirateSecondDice = async (action: "stand" | "add" | "double") => {
+    if (pirateStage !== "round-two" || pirateBusy) return;
+    let finalWager = pirateWager;
+    if (action === "add") {
+      const addition = Number(pirateAddDraft);
+      if (!Number.isInteger(addition) || addition <= 0 || addition % 10 !== 0) {
+        setPirateError("Add a positive multiple of 10 coins.");
+        return;
+      }
+      finalWager += addition;
+    } else if (action === "double") {
+      finalWager *= 2;
+    }
+    if (finalWager > 100 || finalWager > pirateMaxWager) {
+      setPirateError(`Your total wager cannot exceed ${pirateMaxWager} coins.`);
+      return;
+    }
+
+    setPirateError("");
+    setPirateStage("validating-second");
+    try {
+      await validateMoneyPirateWager(finalWager);
+    } catch (error) {
+      setPirateError(
+        error instanceof Error ? error.message : "Your wager is not valid.",
+      );
+      setPirateStage("round-two");
+      return;
+    }
+    setPirateWager(finalWager);
+    setPirateStage("rolling-second");
+    playPirateSound("roll", pirateSoundEnabled);
+    await new Promise((resolve) => window.setTimeout(resolve, 1000));
+    const finalPlayerDice: [number, number] = [
+      playerDice[0] ?? 1 + Math.floor(Math.random() * 6),
+      1 + Math.floor(Math.random() * 6),
+    ];
+    const finalHostDice: [number, number] = [
+      hostDice[0] ?? 1 + Math.floor(Math.random() * 6),
+      1 + Math.floor(Math.random() * 6),
+    ];
+    setPlayerDice(finalPlayerDice);
+    setHostDice(finalHostDice);
+
+    try {
+      const settled = await settleMoneyPirateGame({
+        wager: finalWager,
+        prediction: piratePrediction,
+        playerDice: finalPlayerDice,
+        hostDice: finalHostDice,
+      });
+      setCoins(settled.coins);
+      setPiratePayout({ won: settled.won, amount: finalWager });
+      setPirateHistory((history) =>
+        [
+          {
+            playerTotal: settled.player_total,
+            hostTotal: settled.host_total,
+            wager: finalWager,
+            won: settled.won,
+            prediction: piratePrediction,
+          },
+          ...history,
+        ].slice(0, 8),
+      );
+      playPirateSound(settled.won ? "win" : "loss", pirateSoundEnabled);
+      setPirateStage("betting");
+      setPirateBetDraft("10");
+    } catch (error) {
+      console.error("Could not settle Money Pirate wager:", error);
+      setPirateError(
+        error instanceof Error
+          ? error.message
+          : "Could not settle this wager. Please try again.",
+      );
+      setPirateStage("round-two");
+    }
+  };
+
+  const handlePirateRestart = async () => {
+    if (pirateBusy || coinFlipBusy) return;
+    try {
+      const result = await restartMoneyPirate();
+      setCoins(result.coins);
+      setPirateStage("betting");
+      setPirateBetDraft("10");
+      setPirateAddDraft("10");
+      setPirateWager(0);
+      setPlayerDice([null, null]);
+      setHostDice([null, null]);
+      setPirateHistory([]);
+      setPiratePayout(null);
+      setPirateError("");
+      setCoinFlipResult(null);
+      setCoinFlipError("");
+      setCoinFlipBet("10");
+    } catch (error) {
+      console.error("Could not restart Money Pirate:", error);
+      setPirateError("Could not reset the backend balance. Please try again.");
     }
   };
 
@@ -714,6 +1002,7 @@ export default function App() {
             ["Today", "home"],
             ["My quests", "target"],
             ["Store", "bag"],
+            ["Playground", "spark"],
           ].map(([label, icon]) => (
             <Button
               className={`nav-item ${activeNav === label ? "active" : ""}`}
@@ -752,21 +1041,23 @@ export default function App() {
       </aside>
 
       <main className="main">
-        <header className="topbar">
-          <Button className="mobile-logo" ariaLabel="Open navigation">
-            <Icon name="bolt" />
-          </Button>
-          <Button
-            className="coin-balance"
-            onClick={() => setActiveNav("Store")}
-          >
-            <span className="coin-icon">
-              <Icon name="coin" size={16} />
-            </span>
-            <strong>{coins}</strong>
-            <span>coins</span>
-          </Button>
-        </header>
+        {activeNav !== "Playground" && (
+          <header className="topbar">
+            <Button className="mobile-logo" ariaLabel="Open navigation">
+              <Icon name="bolt" />
+            </Button>
+            <Button
+              className="coin-balance"
+              onClick={() => setActiveNav("Store")}
+            >
+              <span className="coin-icon">
+                <Icon name="coin" size={16} />
+              </span>
+              <strong>{coins}</strong>
+              <span>coins</span>
+            </Button>
+          </header>
+        )}
 
         <div className="content">
           {activeNav === "Store" ? (
@@ -985,8 +1276,8 @@ export default function App() {
                               <span className="category">{quest.category}</span>
                               {typeof quest.coinReward === "number" && (
                                 <span className="coin-reward-badge">
-                                  <Icon name="coin" size={12} />
-                                  +{quest.coinReward} coins
+                                  <Icon name="coin" size={12} />+
+                                  {quest.coinReward} coins
                                 </span>
                               )}
                             </div>
@@ -1038,8 +1329,8 @@ export default function App() {
                               <span className="category">{quest.category}</span>
                               {typeof quest.coinReward === "number" && (
                                 <span className="coin-reward-badge">
-                                  <Icon name="coin" size={12} />
-                                  +{quest.coinReward} coins
+                                  <Icon name="coin" size={12} />+
+                                  {quest.coinReward} coins
                                 </span>
                               )}
                             </div>
@@ -1058,6 +1349,303 @@ export default function App() {
                   </div>
                 </section>
               </div>
+            </section>
+          ) : activeNav === "Playground" ? (
+            <section className="playground-view money-pirate-view">
+              <div className="pirate-topbar">
+                <div className="pirate-wallets">
+                  <div
+                    className={`pirate-status-card balance-card ${piratePayout ? "balance-pulse" : ""}`}
+                  >
+                    <span>Your balance</span>
+                    <strong>{coins} coins</strong>
+                    {piratePayout && (
+                      <span
+                        key={`${piratePayout.amount}-${piratePayout.won}-${coins}`}
+                        className={`pirate-payout ${piratePayout.won ? "won" : "lost"}`}
+                      >
+                        {piratePayout.won ? "+" : "−"}
+                        {piratePayout.amount} coins
+                      </span>
+                    )}
+                  </div>
+                  <div className="pirate-status-card">
+                    <span>Total bet</span>
+                    <strong>{activePirateGame === "dice" ? pirateWager : Number(coinFlipBet) || 0} coins</strong>
+                  </div>
+                </div>
+                <div className="pirate-top-actions">
+                  <div className="pirate-status-card stage-card">
+                    <span>Stage</span>
+                    <strong>
+                      {activePirateGame === "coin" ? "Coin flip" : pirateStage === "betting" ||
+                      pirateStage === "validating-first" ||
+                      pirateStage === "rolling-first"
+                        ? "Round 1"
+                        : "Round 2"}
+                    </strong>
+                  </div>
+                  <button
+                    className={`pirate-sound-button ${pirateSoundEnabled ? "sound-on" : ""}`}
+                    onClick={() => setPirateSoundEnabled((enabled) => !enabled)}
+                    aria-label={
+                      pirateSoundEnabled ? "Mute sounds" : "Enable sounds"
+                    }
+                  >
+                    Sound: {pirateSoundEnabled ? "on" : "off"}
+                  </button>
+                  <button
+                    className="pirate-help-button"
+                    onClick={() => setShowPirateHelp((open) => !open)}
+                    aria-label="Money Pirate rules and history"
+                  >
+                    ?
+                  </button>
+                </div>
+              </div>
+              <div className="pirate-game-switch" role="group" aria-label="Choose a game">
+                <Button ariaPressed={activePirateGame === "dice"} className={activePirateGame === "dice" ? "selected" : ""} onClick={() => setActivePirateGame("dice")}>Dice game</Button>
+                <Button ariaPressed={activePirateGame === "coin"} className={activePirateGame === "coin" ? "selected" : ""} onClick={() => setActivePirateGame("coin")}>Coin flip</Button>
+              </div>
+              {activePirateGame === "dice" && <>
+              {showPirateHelp && (
+                <aside className="pirate-help-panel">
+                  <h2>How to play</h2>
+                  <p>
+                    Choose Upper or Below and bet a multiple of 10. The host and
+                    you roll one die each, then choose a second-round action. A
+                    tie loses. Wagers are capped at 100 coins with up to 50
+                    coins of credit.
+                  </p>
+                  <h3>Recent games</h3>
+                  {pirateHistory.length ? (
+                    <ol>
+                      {pirateHistory.map((game, index) => (
+                        <li
+                          key={`${game.playerTotal}-${game.hostTotal}-${index}`}
+                        >
+                          {game.won ? "Won" : "Lost"} {game.wager} · You{" "}
+                          {game.playerTotal}, host {game.hostTotal} ·{" "}
+                          {game.prediction === "upper" ? "Upper" : "Below"}
+                        </li>
+                      ))}
+                    </ol>
+                  ) : (
+                    <p>No games played yet.</p>
+                  )}
+                </aside>
+              )}
+              <div className="pirate-board">
+                <div className="pirate-side pirate-host-side">
+                  <h2>Host</h2>
+                  <div className="pirate-dice-row">
+                    {hostDice.map((die, index) => (
+                      <div
+                        key={`host-${index}`}
+                        className={`fruit-die ${(pirateStage === "rolling-first" && index === 0) || (pirateStage === "rolling-second" && index === 1) ? "rolling" : ""}`}
+                        aria-label={
+                          die ? `Host die showing ${die}` : "Unknown host die"
+                        }
+                      >
+                        {die === null ? "?" : fruitDice[die - 1]}
+                      </div>
+                    ))}
+                  </div>
+                  <span className="pirate-total">
+                    Total:{" "}
+                    {hostDice.every((die) => die !== null)
+                      ? (hostDice[0] as number) + (hostDice[1] as number)
+                      : "—"}
+                  </span>
+                </div>
+                <div className="pirate-side pirate-player-side">
+                  <h2>You</h2>
+                  <div className="pirate-dice-row">
+                    {playerDice.map((die, index) => (
+                      <div
+                        key={`player-${index}`}
+                        className={`fruit-die ${(pirateStage === "rolling-first" && index === 0) || (pirateStage === "rolling-second" && index === 1) ? "rolling" : ""}`}
+                        aria-label={
+                          die ? `Your die showing ${die}` : "Unknown die"
+                        }
+                      >
+                        {die === null ? "?" : fruitDice[die - 1]}
+                      </div>
+                    ))}
+                  </div>
+                  <span className="pirate-total">
+                    Total:{" "}
+                    {playerDice.every((die) => die !== null)
+                      ? (playerDice[0] as number) + (playerDice[1] as number)
+                      : "—"}
+                  </span>
+                </div>
+              </div>
+              {pirateGameOver ? (
+                <div className="pirate-game-over">
+                  <strong>Game Over</strong>
+                  <span>
+                    You don’t have enough coins or credit for the minimum
+                    10-coin bet.
+                  </span>
+                  <Button
+                    className="coin-flip-button"
+                    onClick={() => void handlePirateRestart()}
+                  >
+                    Restart
+                  </Button>
+                </div>
+              ) : pirateStage === "betting" ||
+                pirateStage === "validating-first" ||
+                pirateStage === "rolling-first" ? (
+                <div className="pirate-controls pirate-start-controls">
+                  <div
+                    className="pirate-prediction-picker"
+                    role="group"
+                    aria-label="Choose your prediction"
+                  >
+                    {(["upper", "below"] as const).map((choice) => (
+                      <Button
+                        key={choice}
+                        disabled={pirateBusy}
+                        ariaPressed={piratePrediction === choice}
+                        className={`pirate-choice-button ${piratePrediction === choice ? "selected" : ""}`}
+                        onClick={() => setPiratePrediction(choice)}
+                      >
+                        {choice === "upper" ? "Upper ↑" : "Below ↓"}
+                      </Button>
+                    ))}
+                  </div>
+                  <div className="pirate-control-row">
+                    <label className="bet-label" htmlFor="pirate-start-bet">
+                      Bet coins
+                    </label>
+                    <input
+                      className="bet-input"
+                      id="pirate-start-bet"
+                      type="number"
+                      min={10}
+                      max={pirateMaxWager}
+                      step={10}
+                      disabled={pirateBusy}
+                      value={pirateBetDraft}
+                      onChange={(event) =>
+                        setPirateBetDraft(event.target.value)
+                      }
+                    />
+                    <Button
+                      className="coin-flip-button"
+                      disabled={pirateBusy}
+                      onClick={() => void startPirateGame()}
+                    >
+                      {pirateStage === "validating-first"
+                        ? "Checking…"
+                        : pirateStage === "rolling-first"
+                          ? "Rolling…"
+                          : "Bet & Roll"}
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="pirate-controls pirate-round-two-controls">
+                  <div
+                    className="pirate-prediction-picker"
+                    role="group"
+                    aria-label="Update your prediction"
+                  >
+                    {(["upper", "below"] as const).map((choice) => (
+                      <Button
+                        key={choice}
+                        disabled={pirateBusy}
+                        ariaPressed={piratePrediction === choice}
+                        className={`pirate-choice-button ${piratePrediction === choice ? "selected" : ""}`}
+                        onClick={() => setPiratePrediction(choice)}
+                      >
+                        {choice === "upper" ? "Upper ↑" : "Below ↓"}
+                      </Button>
+                    ))}
+                  </div>
+                  <div className="pirate-control-row">
+                    <label className="bet-label" htmlFor="pirate-add-bet">
+                      Add coins
+                    </label>
+                    <input
+                      className="bet-input"
+                      id="pirate-add-bet"
+                      type="number"
+                      min={10}
+                      max={Math.max(0, pirateMaxWager - pirateWager)}
+                      step={10}
+                      disabled={pirateBusy}
+                      value={pirateAddDraft}
+                      onChange={(event) =>
+                        setPirateAddDraft(event.target.value)
+                      }
+                    />
+                    <Button
+                      className="coin-flip-button"
+                      disabled={pirateBusy}
+                      onClick={() => void rollPirateSecondDice("add")}
+                    >
+                      Add &amp; Roll
+                    </Button>
+                  </div>
+                  <div className="pirate-action-buttons">
+                    <Button
+                      className="coin-flip-button secondary"
+                      disabled={pirateBusy}
+                      onClick={() => void rollPirateSecondDice("stand")}
+                    >
+                      Stand &amp; Roll
+                    </Button>
+                    <Button
+                      className="coin-flip-button secondary"
+                      disabled={pirateBusy}
+                      onClick={() => void rollPirateSecondDice("double")}
+                    >
+                      Double &amp; Roll
+                    </Button>
+                  </div>
+                </div>
+              )}
+              {pirateError && (
+                <p className="pirate-error" role="alert">
+                  {pirateError}
+                </p>
+              )}
+              {piratePayout && (
+                <p
+                  className={`pirate-result-line ${piratePayout.won ? "won" : "lost"}`}
+                >
+                  {piratePayout.won ? "You won!" : "You lost."} The final dice
+                  remain on the board.
+                </p>
+              )}
+              </>}
+              {activePirateGame === "coin" && <section className="pirate-coinflip-section" aria-labelledby="coinflip-title">
+                <div className="coinflip-heading">
+                  <span className="eyebrow">BONUS GAME</span>
+                  <h2 id="coinflip-title">Coin flip</h2>
+                  <p>Pick a side and wager coins from your shared balance.</p>
+                </div>
+                <div className={`coinflip-coin ${coinFlipBusy ? "flipping" : ""} ${coinFlipResult?.face ?? ""}`} aria-live="polite">
+                  {coinFlipBusy ? "Flipping…" : coinFlipResult?.face ?? "Ready"}
+                </div>
+                <div className="coinflip-controls">
+                  <div className="coinflip-sides" role="group" aria-label="Choose heads or tails">
+                    {(["heads", "tails"] as const).map((side) => (
+                      <Button key={side} disabled={coinFlipBusy || pirateStage !== "betting"} ariaPressed={coinFlipChoice === side} className={`pirate-choice-button ${coinFlipChoice === side ? "selected" : ""}`} onClick={() => setCoinFlipChoice(side)}>
+                        {side === "heads" ? "Heads" : "Tails"}
+                      </Button>
+                    ))}
+                  </div>
+                  <label className="bet-label" htmlFor="coinflip-bet">Bet coins</label>
+                  <input className="bet-input" id="coinflip-bet" type="number" min={1} max={Math.max(0, coins)} step={1} disabled={coinFlipBusy || pirateStage !== "betting"} value={coinFlipBet} onChange={(event) => setCoinFlipBet(event.target.value)} />
+                  <Button className="coin-flip-button" disabled={coinFlipBusy || pirateStage !== "betting" || coins < 1} onClick={() => void playCoinFlip()}>{coinFlipBusy ? "Flipping…" : "Flip coin"}</Button>
+                </div>
+                {coinFlipError && <p className="pirate-error" role="alert">{coinFlipError}</p>}
+                {coinFlipResult && <p className={`pirate-result-line ${coinFlipResult.won ? "won" : "lost"}`}>{coinFlipResult.won ? `You won ${coinFlipResult.bet} coins!` : `You lost ${coinFlipResult.bet} coins.`}</p>}
+              </section>}
             </section>
           ) : (
             <>
@@ -1258,8 +1846,8 @@ export default function App() {
                               <span className="category">{quest.category}</span>
                               {typeof quest.coinReward === "number" && (
                                 <span className="coin-reward-badge">
-                                  <Icon name="coin" size={12} />
-                                  +{quest.coinReward} coins
+                                  <Icon name="coin" size={12} />+
+                                  {quest.coinReward} coins
                                 </span>
                               )}
                             </div>
