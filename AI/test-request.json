@@ -1,0 +1,107 @@
+{
+  "journeyDays": 30,
+  "startDate": "2026-10-12",
+  "mainTasks": [
+    {
+      "goalId": "main-exercise",
+      "type": "exercise",
+      "target": [
+        {
+          "metric": "workoutFrequency",
+          "value": 3,
+          "unit": "sessions",
+          "period": "week"
+        },
+        {
+          "metric": "workoutDuration",
+          "value": 30,
+          "unit": "minutes",
+          "period": "session"
+        }
+      ],
+      "progression": {
+        "maxMinutes": 60,
+        "rampDays": 30,
+        "mode": "increase"
+      }
+    },
+    {
+      "goalId": "main-hydration",
+      "type": "hydration",
+      "target": [
+        {
+          "metric": "waterIntake",
+          "value": 2,
+          "unit": "liters",
+          "period": "day"
+        }
+      ]
+    },
+    {
+      "goalId": "main-sleep",
+      "type": "sleep",
+      "target": [
+        {
+          "metric": "bedtime",
+          "value": "23:00",
+          "unit": "time",
+          "period": "day"
+        },
+        {
+          "metric": "sleepDuration",
+          "value": 8,
+          "unit": "hours",
+          "period": "day"
+        }
+      ]
+    },
+    {
+      "goalId": "main-wake",
+      "type": "wakeUp",
+      "target": [
+        {
+          "metric": "wakeTime",
+          "value": "07:00",
+          "unit": "time",
+          "period": "day"
+        }
+      ]
+    },
+    {
+      "goalId": "main-learning",
+      "type": "learning",
+      "target": [
+        {
+          "metric": "studyOrReadingDuration",
+          "value": 20,
+          "unit": "minutes",
+          "period": "day"
+        }
+      ],
+      "progression": {
+        "maxMinutes": 40,
+        "rampDays": 30,
+        "mode": "increase"
+      }
+    }
+  ],
+  "sideQuests": [
+    {
+      "goalId": "side-project",
+      "title": "Build a portfolio website",
+      "target": [
+        {
+          "metric": "projectTime",
+          "value": 30,
+          "unit": "minutes",
+          "period": "day"
+        }
+      ],
+      "deadline": "2026-11-12",
+      "dailyMinutes": 30,
+      "totalHours": 10,
+      "completedMinutes": 0,
+      "completed": false
+    }
+  ]
+}
