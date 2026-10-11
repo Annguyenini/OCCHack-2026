@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   defaultAppContent,
   defaultOutfit,
@@ -12,8 +12,21 @@ import {
 import {
   loadPlayerProfile,
   savePlayerProfile,
+  clearPlayerProfile,
   type PlayerProfile,
 } from "./profileService";
+import {
+  signInAnonymously,
+  initializeProfile,
+  getMyStats,
+  getMyTasks,
+  updateTaskStatus,
+  getMarketClothes,
+  getMyClothes,
+  buyClothes,
+  signOut as signOutBackend,
+  type BackendClothing,
+} from "./backendApi";
 
 const iconPaths: Record<IconName, ReactNode> = {
   bag: (
@@ -105,17 +118,20 @@ function Button({
   className = "",
   onClick,
   ariaLabel,
+  ariaPressed,
   disabled = false,
 }: {
   children: ReactNode;
   className?: string;
   onClick?: () => void;
   ariaLabel?: string;
+  ariaPressed?: boolean;
   disabled?: boolean;
 }) {
   return (
     <button
       aria-label={ariaLabel}
+      aria-pressed={ariaPressed}
       className={`button ${className}`}
       disabled={disabled}
       onClick={onClick}
@@ -388,63 +404,78 @@ export default function App() {
   const [toast, setToast] = useState("");
   const [coins, setCoins] = useState(defaultAppContent.economy.startingCoins);
   const [purchased, setPurchased] = useState<string[]>([]);
-  const [gender, setGender] = useState<"woman" | "man">("woman");
+  const [marketClothes, setMarketClothes] = useState<BackendClothing[]>([]);
+  const [gender, setGender] = useState<"woman" | "man">("man");
   const [equipped, setEquipped] = useState("Everyday tee");
   const [playerName, setPlayerName] = useState("");
   const [nameDraft, setNameDraft] = useState("");
   const [profileReady, setProfileReady] = useState(false);
 
   const completed = quests.filter((quest) => quest.done).length;
-  const earnedXp = useMemo(
-    () =>
-      quests
-        .filter((quest) => quest.done)
-        .reduce((total, quest) => total + quest.xp, 0),
-    [quests],
-  );
-  const totalXp = earnedXp + (claimed ? content.bonusQuest.xp : 0);
-  const levelProgress = useMemo(() => {
-    let level = 0;
-    let xpIntoLevel = totalXp;
-    let xpNeeded = content.leveling.baseXp;
+  const completionPercent = quests.length
+    ? Math.round((completed / quests.length) * 100)
+    : 0;
+  const refreshBackendData = async () => {
+    const [stats, backendTasks, clothes, inventory] = await Promise.all([
+      getMyStats(),
+      getMyTasks(),
+      getMarketClothes(),
+      getMyClothes(),
+    ]);
 
-    while (xpIntoLevel >= xpNeeded) {
-      xpIntoLevel -= xpNeeded;
-      level += 1;
-      xpNeeded *= content.leveling.multiplier;
+    setCoins(stats.coins);
+    if (backendTasks.length > 0) {
+      setQuests(
+        backendTasks.map((task) => ({
+          id: task.id,
+          title: task.title,
+          detail: task.description,
+          category: "Quest",
+          icon: "bolt",
+          tone: "lilac",
+          done: task.status === "completed",
+        })),
+      );
     }
-
-    return {
-      level,
-      xpIntoLevel,
-      xpNeeded,
-      percent: (xpIntoLevel / xpNeeded) * 100,
-    };
-  }, [content.leveling.baseXp, content.leveling.multiplier, totalXp]);
+    setMarketClothes(clothes);
+    setPurchased(inventory.map((entry) => entry.clothes.name));
+  };
 
   useEffect(() => {
     Promise.all([
       loadAppContent().catch(() => defaultAppContent),
       loadPlayerProfile().catch(() => null),
     ])
-      .then(([nextContent, profile]) => {
+      .then(async ([nextContent, profile]) => {
         setContent(nextContent);
         setQuests(
           nextContent.quests.map((quest) => ({
             ...quest,
-            done: profile?.completedQuestIds
-              ? profile.completedQuestIds.includes(quest.id)
-              : quest.done,
+            done:
+              typeof quest.id === "number" && profile?.completedQuestIds
+                ? profile.completedQuestIds.includes(quest.id)
+                : quest.done,
           })),
         );
         setCoins(profile?.coins ?? nextContent.economy.startingCoins);
+
         if (profile) {
           setPlayerName(profile.name);
           setNameDraft(profile.name);
           setPurchased(profile.purchased ?? []);
           setEquipped(profile.equipped ?? defaultOutfit.name);
-          setGender(profile.gender ?? "woman");
+          setGender(profile.gender ?? "man");
           setClaimed(profile.bonusClaimed ?? false);
+        }
+
+        try {
+          if (profile?.name) {
+            await signInAnonymously();
+            await initializeProfile(profile.name, profile.gender ?? "man");
+            await refreshBackendData();
+          }
+        } catch (error) {
+          console.error("Could not load backend stats:", error);
         }
       })
       .finally(() => setProfileReady(true));
@@ -455,15 +486,13 @@ export default function App() {
 
     const profile: PlayerProfile = {
       name: playerName,
-      level: levelProgress.level,
-      xp: totalXp,
       coins,
       purchased,
       equipped,
       gender,
       completedQuestIds: quests
-        .filter((quest) => quest.done)
-        .map((quest) => quest.id),
+        .filter((quest) => quest.done && typeof quest.id === "number")
+        .map((quest) => quest.id as number),
       bonusClaimed: claimed,
     };
     savePlayerProfile(profile).catch(() => {
@@ -475,29 +504,66 @@ export default function App() {
     coins,
     equipped,
     gender,
-    levelProgress.level,
     playerName,
     profileReady,
     purchased,
     quests,
-    totalXp,
   ]);
 
-  const toggleQuest = (id: number) => {
+  const toggleQuest = async (id: Quest["id"]) => {
     const quest = quests.find((item) => item.id === id);
+    if (!quest) return;
+
+    if (typeof id === "string") {
+      if (quest.done) return;
+      try {
+        await updateTaskStatus(id, "completed");
+        const stats = await getMyStats();
+        setQuests((current) =>
+          current.map((item) =>
+            item.id === id ? { ...item, done: true } : item,
+          ),
+        );
+        setCoins(stats.coins);
+        setToast("Quest completed!");
+        window.setTimeout(() => setToast(""), 2400);
+      } catch (error) {
+        console.error("Could not update backend task:", error);
+        setToast("Could not complete this quest. Please try again.");
+        window.setTimeout(() => setToast(""), 2400);
+      }
+      return;
+    }
+
     setQuests((current) =>
       current.map((item) =>
         item.id === id ? { ...item, done: !item.done } : item,
       ),
     );
-    if (quest && !quest.done) {
+    if (!quest.done) {
       setCoins((current) => current + content.economy.coinsPerQuest);
-      setToast(`Nice work — +${quest.xp} XP`);
+      setToast("Nice work — quest completed!");
       window.setTimeout(() => setToast(""), 2400);
-    } else if (quest?.done) {
+    } else {
       setCoins((current) =>
         Math.max(0, current - content.economy.coinsPerQuest),
       );
+    }
+  };
+
+  const startJourney = async () => {
+    const name = nameDraft.trim();
+    if (!name) return;
+
+    try {
+      await signInAnonymously();
+      await initializeProfile(name, gender);
+      setPlayerName(name);
+      await refreshBackendData();
+    } catch (error) {
+      console.error("Could not initialize backend profile:", error);
+      setToast("Could not create your profile. Please try again.");
+      window.setTimeout(() => setToast(""), 2400);
     }
   };
 
@@ -515,19 +581,88 @@ export default function App() {
     window.setTimeout(() => setToast(""), 2400);
   };
 
-  const storeItems = content.storeItems;
+  const handleSignOut = async () => {
+    let serverSignedOut = true;
+    try {
+      await signOutBackend();
+    } catch (error) {
+      serverSignedOut = false;
+      console.error("Could not invalidate backend session:", error);
+    }
 
-  const buyItem = (name: string, price: number) => {
-    if (purchased.includes(name)) return;
-    if (coins < price) {
+    clearPlayerProfile();
+    setPlayerName("");
+    setNameDraft("");
+    setCoins(defaultAppContent.economy.startingCoins);
+    setQuests(defaultAppContent.quests);
+    setClaimed(false);
+    setPurchased([]);
+    setMarketClothes([]);
+    setEquipped(defaultOutfit.name);
+    setGender("man");
+    setActiveNav("Today");
+    setToast(serverSignedOut ? "Signed out" : "Signed out on this device");
+    window.setTimeout(() => setToast(""), 2400);
+  };
+
+  const storeItems: StoreItem[] =
+    marketClothes.length > 0
+      ? marketClothes.map((clothing, index) => {
+          const localItem =
+            content.storeItems.find(
+              (item) => item.name.toLowerCase() === clothing.name.toLowerCase(),
+            ) ??
+            content.storeItems[index % content.storeItems.length] ??
+            defaultOutfit;
+          const validCategories: StoreItem["category"][] = [
+            "casual",
+            "formal",
+            "semi-formal",
+            "sport",
+          ];
+          const category = validCategories.includes(
+            clothing.category as StoreItem["category"],
+          )
+            ? (clothing.category as StoreItem["category"])
+            : localItem.category;
+
+          return {
+            ...localItem,
+            id: clothing.id,
+            name: clothing.name,
+            price: clothing.price,
+            category,
+          };
+        })
+      : content.storeItems;
+
+  const buyItem = async (item: StoreItem) => {
+    if (purchased.includes(item.name)) return;
+    if (coins < item.price) {
       setToast("Not enough coins yet — complete more quests");
       window.setTimeout(() => setToast(""), 2400);
       return;
     }
-    setCoins((current) => current - price);
-    setPurchased((current) => [...current, name]);
-    setEquipped(name);
-    setToast(`${name} added to your collection`);
+
+    if (typeof item.id === "string") {
+      try {
+        const result = await buyClothes(item.id);
+        setCoins(result.coins_remaining);
+        setPurchased((current) => [...current, item.name]);
+        setEquipped(item.name);
+        setToast(`${item.name} added to your collection`);
+      } catch (error) {
+        console.error("Could not purchase backend clothing:", error);
+        setToast("Could not complete this purchase. Please try again.");
+      }
+      window.setTimeout(() => setToast(""), 2400);
+      return;
+    }
+
+    setCoins((current) => current - item.price);
+    setPurchased((current) => [...current, item.name]);
+    setEquipped(item.name);
+    setToast(`${item.name} added to your collection`);
     window.setTimeout(() => setToast(""), 2400);
   };
 
@@ -538,7 +673,7 @@ export default function App() {
           <div className="brand-mark">
             <Icon name="bolt" size={19} />
           </div>
-          <span>Sidekick</span>
+          <span>LevelUP</span>
         </div>
 
         <nav className="nav-list" aria-label="Main navigation">
@@ -564,15 +699,21 @@ export default function App() {
         </nav>
 
         <div className="sidebar-bottom">
-          <div className="mini-level">
+          <div className="player-profile">
             <div className="avatar">
               {playerName ? playerName.slice(0, 2).toUpperCase() : "SK"}
             </div>
             <div>
               <strong>{playerName || "New explorer"}</strong>
-              <span>Level {levelProgress.level} explorer</span>
+              <span>LevelUP player</span>
             </div>
-            <Icon name="chevron" size={17} />
+            <Button
+              ariaLabel="Sign out"
+              className="sign-out-button"
+              onClick={() => void handleSignOut()}
+            >
+              Sign out
+            </Button>
           </div>
         </div>
       </aside>
@@ -582,12 +723,6 @@ export default function App() {
           <Button className="mobile-logo" ariaLabel="Open navigation">
             <Icon name="bolt" />
           </Button>
-          <div className="streak-pill">
-            <Icon name="spark" size={17} />
-            <span>
-              <strong>{content.dashboard.streakDays}</strong> day streak
-            </span>
-          </div>
           <Button
             className="coin-balance"
             onClick={() => setActiveNav("Store")}
@@ -598,15 +733,6 @@ export default function App() {
             <strong>{coins}</strong>
             <span>coins</span>
           </Button>
-          <div className="level-progress">
-            <span>LVL {levelProgress.level}</span>
-            <div className="progress-track">
-              <div style={{ width: `${levelProgress.percent}%` }} />
-            </div>
-            <strong>
-              {levelProgress.xpIntoLevel}/{levelProgress.xpNeeded} XP
-            </strong>
-          </div>
         </header>
 
         <div className="content">
@@ -614,8 +740,8 @@ export default function App() {
             <section className="store-view">
               <div className="store-hero">
                 <div>
-                  <span className="eyebrow">SIDEKICK STORE</span>
-                  <h1>Dress your sidekick.</h1>
+                  <span className="eyebrow">LevelUP STORE</span>
+                  <h1>Dress your character.</h1>
                   <p>
                     Turn real-life wins into fresh looks for your character.
                   </p>
@@ -687,9 +813,7 @@ export default function App() {
                                       owned ? "owned" : ""
                                     }`}
                                     disabled={owned}
-                                    onClick={() =>
-                                      buyItem(item.name, item.price)
-                                    }
+                                    onClick={() => void buyItem(item)}
                                   >
                                     {owned ? (
                                       <>
@@ -766,15 +890,6 @@ export default function App() {
                     <span>Completed</span>
                   </div>
                 </article>
-                <article>
-                  <span className="summary-icon earned">
-                    <Icon name="bolt" size={19} />
-                  </span>
-                  <div>
-                    <strong>{earnedXp}</strong>
-                    <span>XP earned</span>
-                  </div>
-                </article>
               </div>
 
               <section className="bonus-quest-panel">
@@ -787,7 +902,6 @@ export default function App() {
                   <p>{content.bonusQuest.detail}</p>
                 </div>
                 <div className="bonus-rewards">
-                  <span>+{content.bonusQuest.xp} XP</span>
                   <span>
                     <Icon name="coin" size={14} /> +{content.bonusQuest.coins}
                   </span>
@@ -799,7 +913,7 @@ export default function App() {
                     setClaimed(true);
                     setCoins((current) => current + content.bonusQuest.coins);
                     setToast(
-                      `Bonus complete — +${content.bonusQuest.xp} XP and +${content.bonusQuest.coins} coins`,
+                      `Bonus complete — +${content.bonusQuest.coins} coins`,
                     );
                     window.setTimeout(() => setToast(""), 2400);
                   }}
@@ -831,7 +945,6 @@ export default function App() {
                           <div className="quest-log-copy">
                             <div>
                               <span className="category">{quest.category}</span>
-                              <span className="quest-xp">+{quest.xp} XP</span>
                             </div>
                             <h3>{quest.title}</h3>
                             <p>{quest.detail}</p>
@@ -879,7 +992,6 @@ export default function App() {
                           <div className="quest-log-copy">
                             <div>
                               <span className="category">{quest.category}</span>
-                              <span className="quest-xp">+{quest.xp} XP</span>
                             </div>
                             <h3>{quest.title}</h3>
                             <p>{quest.detail}</p>
@@ -916,7 +1028,7 @@ export default function App() {
               <section className="avatar-studio">
                 <div className="avatar-intro">
                   <span className="feature-label">
-                    <Icon name="spark" size={14} /> YOUR SIDEKICK
+                    <Icon name="spark" size={14} /> YOUR CHARACTER
                   </span>
                   <h2>Meet your progress pal.</h2>
                   <p>Build better days together, one small quest at a time.</p>
@@ -937,23 +1049,25 @@ export default function App() {
                 </div>
 
                 <div className="avatar-controls">
-                  <div className="control-group">
+                  {/*<div className="control-group">
                     <span className="control-label">CHARACTER</span>
-                    <div className="gender-toggle">
+                    <div className="gender-toggle" role="group" aria-label="Choose character gender">
                       <Button
                         className={gender === "woman" ? "selected" : ""}
+                        ariaPressed={gender === "woman"}
                         onClick={() => setGender("woman")}
                       >
-                        Woman
+                        Female
                       </Button>
                       <Button
                         className={gender === "man" ? "selected" : ""}
+                        ariaPressed={gender === "man"}
                         onClick={() => setGender("man")}
                       >
-                        Man
+                        Male
                       </Button>
                     </div>
-                  </div>
+                  </div>*/}
                   <div className="control-group">
                     <span className="control-label">WARDROBE</span>
                     <div className="wardrobe-list">
@@ -993,7 +1107,7 @@ export default function App() {
 
               <section className="dashboard-grid">
                 <div className="left-column">
-                  <article className="feature-card">
+                  {/*<article className="feature-card">
                     <div className="feature-copy">
                       <span className="feature-label">
                         <Icon name="spark" size={14} /> BONUS QUEST
@@ -1004,9 +1118,6 @@ export default function App() {
                         <span>
                           <Icon name="clock" size={16} />{" "}
                           {content.bonusQuest.duration}
-                        </span>
-                        <span className="xp-badge">
-                          +{content.bonusQuest.xp} XP
                         </span>
                         <span className="coin-reward">
                           <Icon name="coin" size={14} /> +
@@ -1027,7 +1138,7 @@ export default function App() {
                           setToast(
                             claimed
                               ? "Reward already claimed"
-                              : `Bonus complete — +${content.bonusQuest.xp} XP`,
+                              : "Bonus quest completed!",
                           );
                           window.setTimeout(() => setToast(""), 2400);
                         }}
@@ -1049,7 +1160,7 @@ export default function App() {
                       <span className="art-dot dot-one" />
                       <span className="art-dot dot-two" />
                     </div>
-                  </article>
+                  </article>*/}
 
                   <section className="quest-section">
                     <div className="section-heading">
@@ -1063,17 +1174,21 @@ export default function App() {
                         <div className="progress-track">
                           <div
                             style={{
-                              width: `${(completed / quests.length) * 100}%`,
+                              width: `${completionPercent}%`,
                             }}
                           />
                         </div>
-                        <span>
-                          {Math.round((completed / quests.length) * 100)}%
-                        </span>
+                        <span>{completionPercent}%</span>
                       </div>
                     </div>
 
                     <div className="quest-list">
+                      {quests.length === 0 && (
+                        <div className="empty-quests">
+                          <strong>No quests yet</strong>
+                          <span>Add a quest to get started.</span>
+                        </div>
+                      )}
                       {quests.map((quest) => (
                         <article
                           className={`quest-card ${quest.done ? "done" : ""}`}
@@ -1089,7 +1204,6 @@ export default function App() {
                             </div>
                             <p>{quest.detail}</p>
                           </div>
-                          <span className="quest-xp">+{quest.xp} XP</span>
                           <Button
                             ariaLabel={
                               quest.done
@@ -1110,74 +1224,6 @@ export default function App() {
                 </div>
 
                 <aside className="right-column">
-                  <section className="stat-card consistency-card">
-                    <div className="card-title">
-                      <div>
-                        <span className="small-icon">
-                          <Icon name="bolt" size={17} />
-                        </span>
-                        <h2>Your rhythm</h2>
-                      </div>
-                      <Button className="text-button">
-                        This week <Icon name="chevron" size={14} />
-                      </Button>
-                    </div>
-                    <div className="week-chart">
-                      {content.dashboard.weeklyRhythm.map(
-                        ({ day, value }, index) => (
-                          <div className="day" key={`${day}-${index}`}>
-                            <div className="bar-track">
-                              <div
-                                className={index === 4 ? "today-bar" : ""}
-                                style={{ height: `${value}%` }}
-                              />
-                            </div>
-                            <span>{day}</span>
-                          </div>
-                        ),
-                      )}
-                    </div>
-                    <div className="rhythm-note">
-                      <Icon name="spark" size={16} />
-                      <span>
-                        You&apos;re <strong>18% more consistent</strong> than
-                        last week.
-                      </span>
-                    </div>
-                  </section>
-
-                  <section className="stat-card league-card">
-                    <div className="card-title">
-                      <div>
-                        <span className="small-icon purple">
-                          <Icon name="trophy" size={17} />
-                        </span>
-                        <h2>{content.dashboard.leagueName}</h2>
-                      </div>
-                    </div>
-                    <div className="league-row">
-                      <div className="league-badge">
-                        <Icon name="trophy" size={29} />
-                      </div>
-                      <div>
-                        <span>Your position</span>
-                        <strong>
-                          #{content.dashboard.leaguePosition}{" "}
-                          <small>of {content.dashboard.leagueSize}</small>
-                        </strong>
-                      </div>
-                      <div className="up-badge">↑ 3</div>
-                    </div>
-                    <div className="league-footer">
-                      <div className="face-stack">
-                        <span>JM</span>
-                        <span>KL</span>
-                        <span>RS</span>
-                      </div>
-                      <p>Top 10 move up on Sunday</p>
-                    </div>
-                  </section>
-
                   <section className="quote-card">
                     <Icon name="leaf" size={22} />
                     <blockquote>“{content.dashboard.quote}”</blockquote>
@@ -1207,9 +1253,9 @@ export default function App() {
             <div className="onboarding-mark">
               <Icon name="bolt" size={28} />
             </div>
-            <span className="eyebrow">WELCOME TO SIDEKICK</span>
+            <span className="eyebrow">WELCOME TO LevelUP</span>
             <h2 id="onboarding-title">What should we call you?</h2>
-            <p>Add your first name to start at level 0 and begin your quest.</p>
+            <p>Add your first name to begin your quest.</p>
             <label htmlFor="player-name">Your name</label>
             <input
               autoFocus
@@ -1218,17 +1264,40 @@ export default function App() {
               onChange={(event) => setNameDraft(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" && nameDraft.trim()) {
-                  setPlayerName(nameDraft.trim());
+                  void startJourney();
                 }
               }}
               placeholder="Enter your first name"
               type="text"
               value={nameDraft}
             />
+            <div className="onboarding-gender">
+              <span className="gender-label">Choose your gender</span>
+              <div
+                className="gender-toggle"
+                role="group"
+                aria-label="Choose your gender"
+              >
+                <Button
+                  ariaPressed={gender === "man"}
+                  className={gender === "man" ? "selected" : ""}
+                  onClick={() => setGender("man")}
+                >
+                  Male
+                </Button>
+                <Button
+                  ariaPressed={gender === "woman"}
+                  className={gender === "woman" ? "selected" : ""}
+                  onClick={() => setGender("woman")}
+                >
+                  Female
+                </Button>
+              </div>
+            </div>
             <Button
               className="onboarding-button"
               disabled={!nameDraft.trim()}
-              onClick={() => setPlayerName(nameDraft.trim())}
+              onClick={() => void startJourney()}
             >
               Start my journey <Icon name="chevron" size={17} />
             </Button>
