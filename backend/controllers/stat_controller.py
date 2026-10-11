@@ -6,9 +6,17 @@ from controllers.auth_controller import AuthController
 from services.stat_service import UserStatService
 from core.config import SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY
 
-from pydantic import BaseModel
+from pydantic import BaseModel,Field
+
+class CheckCoinsRequest(BaseModel):
+    amount: int = Field(gt=0)
 
 
+class UpdateCoinsRequest(BaseModel):
+    amount: int = Field(
+        description="Positive to add coins, negative to spend coins",
+        allow_inf_nan=False,
+    )
 class InitializeProfileRequest(BaseModel):
     name: str
     gender: str
@@ -42,7 +50,7 @@ class UserStatController:
             credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer()),
             user=Depends(self.auth.get_current_user),
         ):
-            return self.get_user_stat(user,credentials.credentials)
+            return self.get_user_stat(user,credentials.credentials )
 
         @self.router.post("/initialize")
         def initialize_profile(
@@ -55,6 +63,36 @@ class UserStatController:
                 name=request.name,
                 gender=request.gender,
                 jwt=credentials.credentials
+            )
+
+        @self.router.post("/check-coins")
+        def check_coins(
+            request: CheckCoinsRequest,
+            user=Depends(self.auth.get_current_user),
+            credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer()),
+        ):
+            can_afford = self.user_stat_service.has_enough_coins(
+                user=user,
+                amount=request.amount,
+                jwt=credentials.credentials,
+            )
+
+            return {
+                "amount": request.amount,
+                "can_afford": can_afford,
+            }
+
+        # Add or subtract coins
+        @self.router.patch("/coins")
+        def update_coins(
+            request: UpdateCoinsRequest,
+            user=Depends(self.auth.get_current_user),
+            credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer()),
+        ):
+            return self.user_stat_service.update_coins(
+                user=user,
+                amount=request.amount,
+                jwt=credentials.credentials,
             )
 
 
